@@ -1,17 +1,18 @@
 const baseHandler = {
     get(target, key) {
-        // Reflect.get
-        const res = target[key]
-
-        track(target, key)
+        // const res = target[key]
+        const res = Reflect.get(target, key)
+        track(target, key) // 收集依赖
         return typeof res === 'object' ? reactive(res) : res
     },
     set(target, key, val) {
         const info = { oldValue: target[key], newValue: val }
-        // Reflect.set
-        target[key] = val
+        // target[key] = val
+        const result = Reflect.set(target, key, val);
         //@todo 响应式去通知变化
         trigger(target, key, info)
+
+        return result;
     }
 }
 
@@ -22,28 +23,17 @@ function reactive(target) {
 }
 
 
-function computed(fn) {
-    //  特殊的effect
-    const runner = effect(fn, { computed: true, lazy: true })
-    return {
-        effect: runner,
-        get value() {
-            return runner()
-        }
-    }
-}
 
 
 function effect(fn, options = {}) {
-    // 依赖函数收集
-    let e = createReactiveEffect(fn, options = {})
-    // lazy是computed配置的
-    if (!options.lazy) {
-        // 不是懒执行
-        e()
-    }
+    // 数据变化的时候执行
+    // 依赖函数收集，传递进来的就是依赖函数
+    let e = createReactiveEffect(fn, options = {}) // 创建依赖对象
+    e()
     return e
 }
+let effectStack = [] // 存储effect
+
 function createReactiveEffect(fn, options) {
     // 构造固定格式的effect
     const effect = function effect(...args) {
@@ -51,10 +41,9 @@ function createReactiveEffect(fn, options) {
     }
     // effect的配置
     effect.deps = []
-    effect.computed = options.computed
-    effect.lazy = options.lazy
     return effect
 }
+
 function run(effect, fn, args) {
     // 执行effect
     // 取出effect执行
@@ -67,21 +56,35 @@ function run(effect, fn, args) {
         }
     }
 }
-let effectStack = [] // 存储effect
+
+
+
 // 用一个巨大的map收集
+
+// {
+//     target1:{
+//         key:[依赖的函数1，依赖的函数2]
+//     },
+//     target2:{
+//         key:[依赖的函数1，依赖的函数2]
+//     }
+// }
+
 let targetMap = new WeakMap()
+
 function track(target, key) {
     // 收集依赖
-    const effect = effectStack[effectStack.length - 1]
+    const effect = effectStack[effectStack.length - 1] // 获取最新的依赖函数
     if (effect) {
         let depMap = targetMap.get(target)
         if (depMap === undefined) {
             depMap = new Map()
             targetMap.set(target, depMap)
         }
+
         let dep = depMap.get(key)
         if (dep === undefined) {
-            dep = new Set()
+            dep = new Set() // 用set顺便去重
             depMap.set(key, dep)
         }
         // 容错
@@ -100,22 +103,12 @@ function trigger(target, key, info) {
     if (!depMap) {
         return
     }
-    // 分开，普通的effect和computed有一个优先级
-    // effect先执行
-    // computed可能会依赖普通effects
-    const effects = new Set()
-    const computedRunners = new Set()
+    const effects = new Set() // 因为会有computed和普通的依赖，所以这里这样处理
     if (key) {
         let deps = depMap.get(key)
         deps.forEach(effect => {
-            if (effect.computed) {
-                computedRunners.add(effect)
-            } else {
-                effects.add(effect)
-
-            }
+            effects.add(effect)
         })
     }
     effects.forEach(effect => effect())
-    computedRunners.forEach(computed => computed())
 }
